@@ -122,7 +122,9 @@ def load_data(file_source):
             
             return df
         except Exception as e:
-            st.warning(f"Googleスプレッドシート連携エラー (ローカルExcelを使用します): {e}")
+            import traceback
+            error_details = f"{type(e).__name__}: {repr(e)}"
+            st.warning(f"Googleスプレッドシート連携エラー (ローカルExcelを使用します): {error_details}")
 
     # 2. 既存のローカルファイル（Excel）読み込み（フォールバック）
     if isinstance(file_source, str) and not os.path.exists(file_source):

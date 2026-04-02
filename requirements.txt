@@ -4,4 +4,3 @@ openpyxl
 plotly
 gspread
 google-auth
-#update
