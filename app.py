@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import io
+import gspread
 
 # --- ページ設定 ---
 st.set_page_config(
@@ -71,11 +73,58 @@ COLOR_MAP_TYPE = {
 }
 
 # --- データ読み込み・保存 ---
-@st.cache_data
+@st.cache_data(ttl=1) # リアルタイム反映のためにキャッシュの保持を1秒にする
 def load_data(file_source):
     """
     file_source: ファイルパス(str) または BytesIO オブジェクト
     """
+    # 1. Google Sheets の設定がある場合はそちらを優先
+    if "gcp_service_account" in st.secrets and "google_sheets" in st.secrets:
+        try:
+            client = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+            sheet_url = st.secrets["google_sheets"]["url"]
+            sheet = client.open_by_url(sheet_url).sheet1
+            data = sheet.get_all_values()
+            
+            if data:
+                headers = data[0]
+                rows = data[1:]
+                df = pd.DataFrame(rows, columns=headers)
+            else:
+                df = pd.DataFrame(columns=COLS)
+            
+            # 以降の整形処理
+            new_columns = []
+            seen = set()
+            for col in df.columns:
+                base = str(col).strip()
+                name = base
+                i = 1
+                while name in seen:
+                    name = f"{base}_{i}"
+                    i += 1
+                new_columns.append(name)
+                seen.add(name)
+            df.columns = new_columns
+            
+            for col in COLS:
+                if col not in df.columns:
+                    df[col] = ""
+
+            if '得点の型' in df.columns:
+                df['得点の型'] = df['得点の型'].fillna('未定義')
+            if 'イベント時間（秒）' in df.columns:
+                df['イベント時間（秒）'] = pd.to_numeric(df['イベント時間（秒）'], errors='coerce').fillna(0)
+            if '試合番号' in df.columns:
+                df['試合番号'] = pd.to_numeric(df['試合番号'], errors='coerce').fillna(0).astype(int)
+            if 'ピリオド' in df.columns:
+                df['ピリオド'] = pd.to_numeric(df['ピリオド'], errors='coerce').fillna(1).astype(int)
+            
+            return df
+        except Exception as e:
+            st.warning(f"Googleスプレッドシート連携エラー (ローカルExcelを使用します): {e}")
+
+    # 2. 既存のローカルファイル（Excel）読み込み（フォールバック）
     if isinstance(file_source, str) and not os.path.exists(file_source):
         return pd.DataFrame(columns=COLS)
     try:
@@ -112,6 +161,25 @@ def load_data(file_source):
         return pd.DataFrame(columns=COLS)
 
 def save_to_excel(df, file_path):
+    # 1. Google Sheets の設定がある場合はスプレッドシートを更新
+    if "gcp_service_account" in st.secrets and "google_sheets" in st.secrets:
+        try:
+            client = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+            sheet_url = st.secrets["google_sheets"]["url"]
+            sheet = client.open_by_url(sheet_url).sheet1
+            
+            # シートの中身をクリアして上書き
+            sheet.clear()
+            # 空の値を空白文字に変換してからリストのリストに追加
+            sheet.update([df.columns.values.tolist()] + df.fillna("").astype(str).values.tolist())
+            
+            st.cache_data.clear()
+            return True
+        except Exception as e:
+            st.error(f"スプレッドシートへの保存エラー (権限やURL設定を確認してください): {e}")
+            return False
+
+    # 2. 既存のローカルファイルへの保存
     try:
         df.to_excel(file_path, index=False)
         st.cache_data.clear()
@@ -476,8 +544,20 @@ def main():
     with tab3:
         st.header("🔍 データ管理")
         edited = st.data_editor(df, num_rows="dynamic", use_container_width=True)
-        if st.button("💾 変更を保存 (ローカルファイルがある場合)"):
+        if st.button("💾 変更を保存 (クラウド/ローカル)"):
             if data_path: save_to_excel(edited, data_path); st.success("保存完了")
+            
+        st.markdown("---")
+        # ダウンロードボタンの追加
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            edited.to_excel(writer, index=False)
+        st.download_button(
+            label="⬇️ 現在のデータをExcelとしてダウンロード",
+            data=output.getvalue(),
+            file_name="fencing_data_current.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 if __name__ == "__main__":
     if check_password():
