@@ -60,7 +60,8 @@ def check_password():
 DEFAULT_DATA_FILE = "fencing_data.xlsx"
 TEMPLATE_FILE = "template.xlsx"
 COLS = ['大会名', '大会年月', '試合番号', '予選/本戦', '対戦相手', 'ピリオド', 'イベント時間（秒）',
-        'イベント種別', '得点者', '得点の型', '得点エリア', '無効打突（誰）', '勝敗']
+        'イベント種別', '得点者', '得点の型', '得点エリア', '無効打突（誰）', '勝敗', 
+        'メンタル', 'スキル', 'フィジカル', '振り返りメモ']
 
 # 配色設定
 COLOR_MAP_PLAYER = {'自分': '#2E86C1', '相手': '#C0392B'}
@@ -298,7 +299,7 @@ def main():
         filtered_df = filtered_df[filtered_df['ピリオド'] == int(filter_period)]
 
     # --- タブ ---
-    tab1, tab2, tab3 = st.tabs(["📊 分析ダッシュボード", "⚡ 効率入力", "📝 データ編集"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 分析ダッシュボード", "⚡ 効率入力", "📝 データ編集", "🧠 振り返り・主観評価"])
 
     # =========================================================
     with tab1:
@@ -560,6 +561,60 @@ def main():
             file_name="fencing_data_current.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    # =========================================================
+    with tab4:
+        st.header("🧠 試合の振り返り・主観的評価")
+        st.markdown("選手の主観的なコンディションと、試合・大会を通じた振り返りを記録します。")
+        
+        with st.form("reflection_form"):
+            c_t, c_m = st.columns(2)
+            with c_t: 
+                r_tour = st.text_input("大会名", value=st.session_state.last_tournament)
+            with c_m: 
+                r_match = st.number_input("試合番号", value=int(st.session_state.last_match_num), step=1)
+            
+            st.markdown("#### ① 主観的コンディション評価")
+            st.caption("※ 5段階評価 (5: 非常に良い 〜 1: 非常に悪い)")
+            c1, c2, c3 = st.columns(3)
+            with c1: 
+                eval_mental = st.slider("メンタル (Mental)", 1, 5, 3)
+            with c2: 
+                eval_skill = st.slider("スキル (Skill)", 1, 5, 3)
+            with c3: 
+                eval_physical = st.slider("フィジカル (Physical)", 1, 5, 3)
+            
+            st.markdown("#### ② 振り返りメモ")
+            ref_memo = st.text_area("大会や試合を通じての気づき、良かった点、改善すべき点などを自由に記入してください", height=150)
+            
+            submit_ref = st.form_submit_button("🔥 振り返りを保存", use_container_width=True)
+            
+            if submit_ref:
+                new_row = {
+                    '大会名': r_tour, 
+                    '大会年月': st.session_state.last_tournament_date,
+                    '試合番号': r_match, 
+                    '対戦相手': st.session_state.last_opponent,
+                    'ピリオド': 0, 
+                    '予選/本戦': st.session_state.last_round,
+                    'イベント時間（秒）': 0, 
+                    'イベント種別': '振り返り',
+                    '得点者': '-', 
+                    '得点の型': '-',
+                    '得点エリア': '-', 
+                    '無効打突（誰）': '-', 
+                    '勝敗': '-',
+                    'メンタル': eval_mental, 
+                    'スキル': eval_skill, 
+                    'フィジカル': eval_physical,
+                    '振り返りメモ': ref_memo
+                }
+                updated_df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                if data_path:
+                    if save_to_excel(updated_df, data_path):
+                        st.success("✅ 主観的評価と振り返りを保存しました！（ページをリロードして反映してください）")
+                else:
+                    st.warning("⚠️ データ保存先が見つかりません。")
 
 if __name__ == "__main__":
     if check_password():
